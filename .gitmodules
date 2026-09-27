@@ -1,0 +1,6 @@
+[submodule "pa2"]
+	path = pa2
+	url = https://github.com/cs683-iitb-autumn-2026/pa2.git
+[submodule "PA2-CS683-2026"]
+	path = PA2-CS683-2026
+	url = https://github.com/Shivraj1906/PA2-CS683-2026.git
