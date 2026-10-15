@@ -22,7 +22,7 @@ uint32_t CACHE::l2c_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, c
     while (1)
     {
         for (int i=0; i<L2C_WAY; i++)
-            if (l2_rrpv[set][i] == maxRRPV && !(current_set->instruction)) // prefer to evict data before instructions
+            if (l2_rrpv[set][i] == maxRRPV && !(current_set[i].instruction)) // prefer to evict data before instructions
                 return i;
         for (int i=0; i<L2C_WAY; i++)
             if (l2_rrpv[set][i] == maxRRPV) // if no data was found, then try to evict instructions

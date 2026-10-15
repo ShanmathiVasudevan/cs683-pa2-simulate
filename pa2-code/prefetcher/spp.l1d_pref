@@ -2,7 +2,6 @@
 
 
 #define IP_TRACKER_COUNT 24 // how many ips to be tracked
-#define PREFETCH_DEGREE 3 // new prefetch reqsts
 #define MASK_IP 0xFF // only 8 bits of ip stored
 #define MAX_PATTERN_LENGTH 12 // the stride pattern's maximum length
 #define NO_OF_REPEATS 3 // number of repeats after which we decide the pattern
@@ -54,7 +53,7 @@ class IP_TRACKER {
 };
 
 IP_TRACKER trackers[IP_TRACKER_COUNT];
-
+uint64_t PREFETCH_DEGREE = 3; // new prefetch reqsts
 
 void CACHE::l1d_prefetcher_initialize() 
 {
@@ -69,6 +68,30 @@ void CACHE::l1d_prefetcher_initialize()
 
 void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type, uint8_t critical_ip_flag)
 {
+    if (this->pf_lower_level > 0){
+        int64_t accuracy = this->pf_useful*100/this->pf_lower_level;
+        if (accuracy > 90){
+            PREFETCH_DEGREE = 6;
+        }
+        else if (accuracy > 80){
+            PREFETCH_DEGREE = 5;
+        }
+        else if (accuracy > 75){
+            PREFETCH_DEGREE = 4;
+        }
+        else if (accuracy > 60){
+            PREFETCH_DEGREE = 3;
+        }
+        else if (accuracy > 50){
+            PREFETCH_DEGREE = 2;
+        }
+        else if (accuracy < 20){
+            PREFETCH_DEGREE = 1;
+        }
+        else{
+            PREFETCH_DEGREE = 2;
+        }
+    }
 	// check for a tracker hit
     uint64_t cl_addr = addr >> LOG2_BLOCK_SIZE;
 
@@ -139,7 +162,7 @@ void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
     // do prefetching if there's a pattern of seeing the same
     // stride more than once - uniform
     if (stride == trackers[index].last_stride && trackers[index].isUniform == 1) {
-        trackers[index].num_fails -= 1;
+        trackers[index].num_fails = ((trackers[index].num_fails == 0)?0:(trackers[index].num_fails-1));
         // do some prefetching
         for (int i=0; i<PREFETCH_DEGREE; i++) {
             uint64_t pf_address = (cl_addr + (stride*(i+1))) << LOG2_BLOCK_SIZE;
@@ -160,6 +183,7 @@ void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
         trackers[index].num_fails += 1;
         if (trackers[index].num_fails >= TRIGGER){
             trackers[index].isUniform = 0;
+            trackers[index].num_fails = 0;
         }
     }
     if (trackers[index].isUniform == 0){
@@ -192,7 +216,8 @@ void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
                         trackers[index].pattern[i] = trackers[index].history[i+p_l];
                     }
                     trackers[index].patternFound = 1;
-                    trackers[index].predicted_stride_index = (trackers[index].history_index)%p_l;
+                    trackers[index].num_fails = 0;
+                    trackers[index].predicted_stride_index = (trackers[index].history_index + 1)%p_l;
                     break;
                 }
             }
@@ -201,9 +226,10 @@ void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
             }
         }
         else if (trackers[index].patternFound == 1 && stride == trackers[index].pattern[trackers[index].predicted_stride_index]){
+            int sum = 0;
             for (int i=0; i<PREFETCH_DEGREE; i++) {
-                uint64_t pf_address = (cl_addr + (stride*(i+1))) << LOG2_BLOCK_SIZE;
-
+                uint64_t pf_address = (cl_addr + ((sum + trackers[index].pattern[(trackers[index].predicted_stride_index+i+1)%(trackers[index].length_of_pattern)]))) << LOG2_BLOCK_SIZE;
+                sum += trackers[index].pattern[(trackers[index].predicted_stride_index+i+1)%(trackers[index].length_of_pattern)];
                 // only issue a prefetch if the prefetch address is in the same 4 KB page
                 // as the current demand access address
                 if ((pf_address >> LOG2_PAGE_SIZE) != (addr >> LOG2_PAGE_SIZE))
@@ -216,6 +242,14 @@ void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
                 prefetch_line(ip, addr, pf_address, FILL_L2, 0);
             }
             trackers[index].predicted_stride_index = (trackers[index].predicted_stride_index+1)%trackers[index].length_of_pattern;
+        }
+        else if (trackers[index].patternFound == 1 && stride != trackers[index].pattern[trackers[index].predicted_stride_index]){
+            trackers[index].num_fails += 1;
+            if (trackers[index].num_fails >= TRIGGER){
+                trackers[index].patternFound = 0;
+                trackers[index].history_index = 0;
+                trackers[index].num_fails = 0;
+            }
         }
     }
 
